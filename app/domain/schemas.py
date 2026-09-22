@@ -19,11 +19,11 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Single-turn chat request for the Phase 3 minimal loop.
+    """Single-turn, stateless chat request (POST /api/chat).
 
-    conversation_id is accepted but unused until Phase 4 wires up
-    LangGraph + the SQLite checkpointer; it must never be trusted for
-    authorization once that lands.
+    conversation_id is accepted but ignored here — it exists only so the
+    same request shape can be echoed back. Multi-turn state lives behind
+    POST /api/conversations/{conversation_id}/messages (Phase 4).
     """
 
     message: str = Field(..., min_length=1)
@@ -60,3 +60,31 @@ class ChatResponse(BaseModel):
     usage: Usage
     model: str
     request_id: Optional[str] = None
+
+
+class ConversationCreateResponse(BaseModel):
+    """Backend-generated conversation identity. The frontend must not
+    invent its own conversation_id — see Phase 4 notes on why an
+    unguessable, backend-issued id matters once authorization lands."""
+
+    conversation_id: str
+
+
+class ConversationMessageRequest(BaseModel):
+    """A single turn posted into an existing conversation. conversation_id
+    comes from the URL path, not the body, so there is exactly one source
+    of truth for which thread this turn belongs to."""
+
+    message: str = Field(..., min_length=1)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=1024, gt=0)
+
+
+class ConversationHistoryItem(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class ConversationHistoryResponse(BaseModel):
+    conversation_id: str
+    messages: list[ConversationHistoryItem]

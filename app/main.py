@@ -12,9 +12,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from app.api.routes_chat import router as chat_router
+from app.api.routes_conversations import router as conversations_router
 from app.config import get_settings
+from app.core.conversation_graph import build_conversation_graph
+from app.core.conversation_service import ConversationService
 from app.core.llm_client import InternalLLMClient
 
 
@@ -23,14 +27,22 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
     app.state.llm_client = InternalLLMClient(settings)
-    try:
-        yield
-    finally:
-        await app.state.llm_client.aclose()
+
+    settings.sqlite_dir.mkdir(parents=True, exist_ok=True)
+
+    async with AsyncSqliteSaver.from_conn_string(settings.sqlite_path) as checkpointer:
+        await checkpointer.setup()
+        graph = build_conversation_graph(app.state.llm_client, checkpointer)
+        app.state.conversation_service = ConversationService(graph)
+        try:
+            yield
+        finally:
+            await app.state.llm_client.aclose()
 
 
 app = FastAPI(title="LLM Building", lifespan=lifespan)
 app.include_router(chat_router)
+app.include_router(conversations_router)
 
 
 @app.get("/healthz")
@@ -55,12 +67,15 @@ async def readyz():
     except OSError:
         storage_ok = False
 
-    ready = config_ok and storage_ok
+    conversation_service_ok = getattr(app.state, "conversation_service", None) is not None
+
+    ready = config_ok and storage_ok and conversation_service_ok
     body = {
         "status": "ready" if ready else "not_ready",
         "checks": {
             "onprem_config_complete": config_ok,
             "sqlite_dir_writable": storage_ok,
+            "conversation_checkpointer_ready": conversation_service_ok,
         },
     }
     if not ready:
