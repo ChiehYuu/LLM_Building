@@ -8,3 +8,5 @@ data/*.sqlite-wal
 data/*.sqlite-shm
 .pytest_cache/
 *.egg-info/
+.chainlit/translations/
+.files/
